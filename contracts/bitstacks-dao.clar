@@ -143,3 +143,104 @@
     (ok true)
   )
 )
+
+;; Burn governance tokens
+(define-private (burn-tokens
+    (account principal)
+    (amount uint)
+  )
+  (let ((current-balance (default-to u0 (map-get? balances account))))
+    (asserts! (>= current-balance amount) err-insufficient-balance)
+    (map-set balances account (- current-balance amount))
+    (var-set total-supply (- (var-get total-supply) amount))
+    (ok true)
+  )
+)
+
+;; Public Functions
+
+;; Initialize the contract - can only be called once
+(define-public (initialize)
+  (begin
+    (asserts! (is-contract-owner) err-owner-only)
+    (asserts! (not (var-get initialized)) err-already-initialized)
+    (var-set initialized true)
+    (ok true)
+  )
+)
+
+;; Deposit STX to receive governance tokens
+(define-public (deposit (amount uint))
+  (begin
+    (try! (check-initialized))
+    (asserts! (>= amount (var-get minimum-deposit)) err-below-minimum)
+    (asserts! (> amount u0) err-zero-amount)
+    ;; Transfer STX to contract
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    ;; Update deposit records
+    (map-set deposits tx-sender {
+      amount: amount,
+      lock-until: (+ stacks-block-height (var-get lock-period)),
+      last-reward-block: stacks-block-height,
+    })
+    ;; Mint fund tokens
+    (mint-tokens tx-sender amount)
+  )
+)
+
+;; Withdraw STX after lock period ends
+(define-public (withdraw (amount uint))
+  (begin
+    (try! (check-initialized))
+    (asserts! (> amount u0) err-zero-amount)
+    (let (
+        (deposit-info (unwrap! (map-get? deposits tx-sender) err-unauthorized))
+        (user-balance (unwrap! (get-balance tx-sender) err-unauthorized))
+      )
+      (asserts! (>= stacks-block-height (get lock-until deposit-info)) err-locked-period)
+      (asserts! (>= user-balance amount) err-insufficient-balance)
+      ;; Burn tokens first
+      (try! (burn-tokens tx-sender amount))
+      ;; Transfer STX back to user
+      (as-contract (stx-transfer? amount (as-contract tx-sender) tx-sender))
+    )
+  )
+)
+
+;; Create a new governance proposal
+(define-public (create-proposal
+    (description (string-ascii 256))
+    (amount uint)
+    (target principal)
+    (duration uint)
+  )
+  (begin
+    (try! (check-initialized))
+    ;; Input validation
+    (asserts! (> (len description) u0) err-invalid-description)
+    (asserts! (> amount u0) err-zero-amount)
+    (asserts! (not (is-eq target (as-contract tx-sender))) err-invalid-target)
+    (asserts! (and (>= duration minimum-duration) (<= duration maximum-duration))
+      err-invalid-duration
+    )
+    (let (
+        (proposer-balance (unwrap! (map-get? balances tx-sender) err-unauthorized))
+        (proposal-id (+ (var-get proposal-count) u1))
+      )
+      (asserts! (> proposer-balance u0) err-unauthorized)
+      ;; Create new proposal with validated inputs
+      (map-set proposals proposal-id {
+        proposer: tx-sender,
+        description: description,
+        amount: amount,
+        target: target,
+        expires-at: (+ stacks-block-height duration),
+        executed: false,
+        yes-votes: u0,
+        no-votes: u0,
+      })
+      (var-set proposal-count proposal-id)
+      (ok proposal-id)
+    )
+  )
+)
