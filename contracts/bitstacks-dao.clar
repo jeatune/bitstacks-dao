@@ -318,3 +318,36 @@
     )
   )
 )
+
+;; Read-only Functions
+
+;; Get account balance
+(define-read-only (get-balance (account principal))
+  (ok (default-to u0 (map-get? balances account)))
+)
+
+;; Get total token supply
+(define-read-only (get-total-supply)
+  (ok (var-get total-supply))
+)
+
+;; Get proposal details
+(define-read-only (get-proposal (proposal-id uint))
+  (ok (map-get? proposals proposal-id))
+)
+
+;; Get deposit information
+(define-read-only (get-deposit-info (account principal))
+  (ok (map-get? deposits account))
+)
+
+;; Get user's vote on a proposal
+(define-read-only (get-vote
+    (proposal-id uint)
+    (voter principal)
+  )
+  (ok (map-get? votes {
+    proposal-id: proposal-id,
+    voter: voter,
+  }))
+)
